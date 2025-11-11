@@ -1,99 +1,124 @@
-# model.py
-from mesa import Model
-from mesa.space import MultiGrid
-from mesa.datacollection import DataCollector
-from agents import Susceptible, Skeptic, News
+import math
 import random
+from mesa import Model
+from mesa.discrete_space import OrthogonalMooreGrid
+from mesa.datacollection import DataCollector
+from mesa.experimental.devs import ABMSimulator
+
+from agents import BOT, Skeptic, Susceptible
+
 
 class SocialNetworkModel(Model):
-    def __init__(self, width=20, height=20, n_susceptible=20, n_skeptic=10, n_initial_news=5):
-        super().__init__()
-        self.width = width
+    def __init__(
+        self,
+        width=20,
+        height=20,
+        n_susceptible=30,
+        n_skeptic=30,
+        n_bots=6,
+        seed=None,
+        simulator: ABMSimulator = None,
+    ):
+        super().__init__(seed=seed)
+        self.simulator = simulator
+        self.simulator.setup(self)
+
         self.height = height
-        self.grid = MultiGrid(width, height, torus=True)
+        self.width = width
+        self.running = True
+        self.true_news_shared = 0
+        self.false_news_shared = 0
 
-        # NO usar self.agents 
-        self.user_agents = []
+        self.grid = OrthogonalMooreGrid(
+            [self.height, self.width],
+            torus=True,
+            capacity=math.inf,
+            random=self.random,
+        )
 
-        # Crear agentes susceptibles
-        for i in range(n_susceptible):
-            agent = Susceptible(self, id=f"S{i}")
-            self.user_agents.append(agent)
-            x, y = random.randrange(width), random.randrange(height)
-            self.grid.place_agent(agent, (x, y))
+        # Crear agentes
+        Skeptic.create_agents(
+            self,
+            n_skeptic,
+            cell=self.random.choices(self.grid.all_cells.cells, k=n_skeptic),
+        )
 
-        # Crear agentes escépticos
-        for i in range(n_skeptic):
-            agent = Skeptic(self, id=f"K{i}")
-            self.user_agents.append(agent)
-            x, y = random.randrange(width), random.randrange(height)
-            self.grid.place_agent(agent, (x, y))
+        Susceptible.create_agents(
+            self,
+            n_susceptible,
+            cell=self.random.choices(self.grid.all_cells.cells, k=n_susceptible),
+        )
 
-        # Inicializar noticias
-        self.seed_news(n_initial_news)
+        BOT.create_agents(
+            self,
+            n_bots,
+            cell=self.random.choices(self.grid.all_cells.cells, k=n_bots),
+        )
 
+        # Guardar todos los agentes en una sola lista
+        self.total_agents = (
+            list(self.agents_by_type[BOT])
+            + list(self.agents_by_type[Skeptic])
+            + list(self.agents_by_type[Susceptible])
+        )
 
-        def avg_perception(m):
-            if len(m.user_agents) == 0:
-                return 0.0
-            return sum(a.perception for a in m.user_agents) / len(m.user_agents)
+        # --- NUEVA FUNCIÓN ---
+        def avg_perception_by_agent(m, party: str):
+            """Calcula el promedio de percepción hacia un partido,
+            separado por tipo de agente (Skeptic y Susceptible)."""
+            user_agents = [
+                a for a in m.total_agents
+                if hasattr(a, "perception") and isinstance(a.perception, dict)
+            ]
 
-        def avg_perception_party(m, party):
-            agents = [a for a in m.user_agents if a.politicalParty == party]
-            if not agents:
-                return 0.0
-            return sum(a.perception for a in agents) / len(agents)
+            if not user_agents:
+                return {"Skeptic": 0.0, "Susceptible": 0.0}
 
-        def total_news_shared(m):
-            return sum(len(a.newsShared) for a in m.user_agents)
+            skeptics = [a for a in user_agents if isinstance(a, Skeptic)]
+            susceptibles = [a for a in user_agents if isinstance(a, Susceptible)]
 
-        def susceptible_shared(m):
-            # suma de noticias compartidas por agentes Susceptible
-            return sum(len(a.newsShared) for a in m.user_agents if isinstance(a, Susceptible))
+            def mean(values):
+                return sum(values) / len(values) if values else 0.0
 
-        def skeptic_shared(m):
-            # suma de noticias compartidas por agentes Skeptic
-            return sum(len(a.newsShared) for a in m.user_agents if isinstance(a, Skeptic))
+            avg_skeptic = mean([a.perception[party] for a in skeptics])
+            avg_susceptible = mean([a.perception[party] for a in susceptibles])
 
+            return {"Skeptic": avg_skeptic, "Susceptible": avg_susceptible}
+
+        # --- DATA COLLECTOR ---
         self.datacollector = DataCollector(
             model_reporters={
-                "AvgPerception": avg_perception,
-                "AvgPerception_A": lambda m: avg_perception_party(m, "A"),
-                "AvgPerception_B": lambda m: avg_perception_party(m, "B"),
-                "TotalNewsShared": total_news_shared,
-                "Susceptible Shared": susceptible_shared,
-                "Skeptic Shared": skeptic_shared,
-            },
-            agent_reporters={
-                "Perception": lambda a: a.perception,
-                "Party": lambda a: a.politicalParty
+                "AvgPerception_Skeptic": lambda m: avg_perception_by_agent(m, "A")["Skeptic"],
+                "AvgPerception_Susceptible": lambda m: avg_perception_by_agent(m, "A")["Susceptible"],
+                "TrueNewsShared": lambda m: m.true_news_shared,
+                "FalseNewsShared": lambda m: m.false_news_shared,
             }
         )
 
-        self.running = True
-        # recolectar estado inicial
-        self.datacollector.collect(self)
+        # --- Inicialización: bots crean y envían noticias ---
+        for bot in self.agents_by_type[BOT]:
+            bot.create_news()
+            for news in list(bot.initialnews):
+                bot.sendNews(news, radius=1)
 
-    def seed_news(self, n_news: int = 5):
-        """Crea las noticias iniciales y las asigna a agentes aleatorios."""
-        if len(self.user_agents) == 0 or n_news <= 0:
-            return
-        for i in range(n_news):
-            news = News(id=f"N{i}")
-            # Asignar la noticia a 1 o 2 agentes al azar para empezar la difusión
-            k = min(len(self.user_agents), random.randint(1, 2))
-            targets = random.sample(self.user_agents, k=k)
-            for agent in targets:
-                agent.receiveNews(news)
+        # Colecta inicial
+        self.datacollector.collect(self)
 
     def step(self):
-        """Ejecuta un paso de la simulación: cada agente decide si comparte sus noticias."""
-        # iteramos sobre una copia por si la lista cambia al enviar noticias
-        for agent in list(self.user_agents):
-            # iterar sobre copia de newsReceived para evitar mutación durante el loop
+        """Ejecuta un paso de la simulación: cada usuario decide si compartir sus noticias."""
+        user_agents = list(self.agents_by_type[Skeptic]) + list(self.agents_by_type[Susceptible])
+
+        for agent in user_agents:
             for news in list(agent.newsReceived):
                 if agent.shareDecision(news):
-                    agent.sendNews(news, radius=1)  # compartimos a vecinos inmediatos
+                    self.countNewsbyType(news)
+                    agent.sendNews(news, radius=1)
 
-        # Recoger métricas
         self.datacollector.collect(self)
+
+    def countNewsbyType(self, news):
+        """Incrementa los contadores globales de noticias según su veracidad."""
+        if news.veracity:
+            self.true_news_shared += 1
+        else:
+            self.false_news_shared += 1

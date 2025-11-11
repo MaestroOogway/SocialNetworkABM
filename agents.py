@@ -1,4 +1,4 @@
-from mesa.discrete_space import CellAgent, FixedAgent
+from mesa.discrete_space import CellAgent
 from commons.commons import *
 
 import random
@@ -6,132 +6,152 @@ from typing import Optional, List
 
 PARTY = ['A', 'B']
 POLARITYNEWS = [-1, 1]
+VERACITYNEWS = [False, True]
 PHI = 0.6
 ALPHA = 0.05
 
-def clamp(x: float, a: float, b: float) -> float:
-    return max(a, min(b, x))
-
 class News:
+    count = 0
     def __init__(
         self,
-        id,
-        party: Optional[str] = None,
-        polarity: Optional[int] = None,
-        veracity: Optional[float] = None
+        id = None,
+        party = None,
+        polarity = None,
+        veracity = None
     ):
+        super().__init__() #Initialize News
+        if id is None:         
+            id = News.count
         self.id = id
-        self.party = party if party is not None else random.choice(PARTY)
+        News.count += 1
+        self.party = party if party is not None else "A" #random.choice(PARTY)
         self.polarity = polarity if polarity is not None else random.choice(POLARITYNEWS)
-        self.veracity = veracity if veracity is not None else round(random.uniform(0.01, 0.99), 2)
+        self.veracity = veracity if veracity is not None else random.choice(VERACITYNEWS)
+
+class BOT(CellAgent):
+    count = 0
+    def __init__(
+        self,
+        model,
+        id = None,
+        initialnews = None,
+        cell = None
+    ):
+        super().__init__(model) #Initialize News
+        if id is None:         
+            id = BOT.count
+        self.id = id
+        BOT.count += 1
+        self.initialnews = initialnews if initialnews is not None else []
+        self.cell = cell
+    
+    def create_news(self):
+        news = News()
+        self.initialnews.append(news)
+
+    def sendNews(self, news: News, radius: int = 1):
+        # recorrer celdas vecinas
+        for cell in self.cell.neighborhood:
+        # recorrer agentes dentro de cada celda vecina
+            for agent in cell.agents:
+            # asegurarse de que el agente pueda recibir noticias
+                if hasattr(agent, "receiveNews") and agent is not self:
+                    agent.receiveNews(news)
 
 class User(CellAgent):
-    """Initialize an user social Network. 
-    Args: 
-    model: Model instance 
-    id: id of the user state: actual state of the user. 
-    politicalParty: if the user belongs to "a" or "b" party 
-    credibility: numerical index of credibility of the user, depends of the user skeptic has 0.1 to 0.3 and suceptible has 0.7 to 1 
-    percpetion: numerical index of percpetion of the user. satarts in zero(neutral), next in the advance of simualtion goes to -1 or 1. 
-    newsShared: number of news shared on the network 
-    newsReceived: numbers of news recived on te network """
 
     def __init__(
         self,
         model,
         id,
-        politicalParty: Optional[str] = None,
+        interest: Optional[float] = None, 
         credibility: Optional[float] = None,
-        perception: float = 0.0,
+        perception: Optional[dict[str, float]] = None,
         newsShared: Optional[List[News]] = None,
         newsReceived: Optional[List[News]] = None,
         cell = None
     ):
-        """
-        Initialize a user in the social network.
-        """
-        super().__init__(model)
+        super().__init__(model) #Initialize Agent
 
         self.id = id
-        self.politicalParty = politicalParty if politicalParty is not None else random.choice(PARTY)
+        self.interest = interest if interest is not None else random.random()
         self.credibility = credibility
-        self.perception = perception
-        self.newsShared: List[News] = newsShared if newsShared is not None else []
-        self.newsReceived: List[News] = newsReceived if newsReceived is not None else []
+        self.perception = perception if perception is not None else {"A": 0.0, "B": 0.0}
+        self.newsShared =  newsShared if newsShared is not None else []
+        self.newsReceived =  newsReceived if newsReceived is not None else []
+        self.cell = cell
 
     def computeShareProbability(self, news: News, w_m, w_f, w_c):
-        party_agent = 1 if self.politicalParty=="A" else -1
-        party_news = 1 if news.party=="A" else -1
-        m = (1 + news.polarity*party_news*party_agent)/2
-        return clamp(w_m*m + w_f*news.veracity + w_c*self.credibility, 0,1)
+        if news.party == 'A':
+            return clamp(w_m*news.veracity + w_f*self.perception["A"] + w_c*self.credibility, 0,1)
+        elif news.party == 'B':
+            return clamp(w_m*news.veracity + w_f*self.perception["B"] + w_c*self.credibility, 0,1)
 
     def receiveNews(self, news: News):
         self.newsReceived.append(news)
         self.updatePerception(news)
 
     def sendNews(self, news: News, radius: int = 1):
-        neighbors = self.model.grid.get_neighbors(
-            self.pos,
-            moore=True,          
-            include_center=False, 
-            radius=radius
-        )
-    
-        for agent in neighbors:
-            agent.receiveNews(news)
+        # recorrer celdas vecinas 
+        for cell in self.cell.neighborhood: 
+            # recorrer agentes dentro de cada celda vecina 
+            for agent in cell.agents: # asegurarse de que el agente pueda recibir noticias 
+                if hasattr(agent, "receiveNews") and agent is not self: 
+                    agent.receiveNews(news)
 
-        self.newsShared.append(news)
 
     def shareDecision(self, news: News) -> bool:
         """Abstracto: devolver True si decide compartir (según la noticia)."""
         raise NotImplementedError
 
-
     def updatePerception(self, news: News):
         """Abstracto: actualizar percepción según la noticia."""
         raise NotImplementedError
 
-
 class Susceptible(User):
-    def __init__(self, model, id, credibility=None, **kwargs):
+    def __init__(self, model, id=None, credibility=None, **kwargs):
+        if id is None:
+            id = len(model.agents_by_type[Susceptible]) if Susceptible in model.agents_by_type else 0
         super().__init__(model, id, credibility=credibility, **kwargs)
         if self.credibility is None:
             self.credibility = random.uniform(0.6, 0.9)
 
     def shareDecision(self, news: News) -> bool:
-        w1 = 0.5 
+        w1 = 0.1 
         w2 = 0.3 
-        w3 = 0.2
+        w3 = 0.6
         pc = self.computeShareProbability(news, w1, w2, w3)
         return random.random() < pc
 
     def updatePerception(self, news: News):
-        """Update in function to news recived"""
-        if (self.politicalParty == news.party):
-            x = 0.0 
+        if news.party == 'A':
+            self.perception["A"] = roundto(clamp(self.perception["A"] + (ALPHA * news.polarity), -1.0, 1.0))
         else:
-            x = 1.0
-        self.perception = clamp(self.perception + x * ALPHA * news.polarity, -1.0, 1.0)
-
+            self.perception["B"] = roundto(clamp(self.perception["B"] + (ALPHA * news.polarity), -1.0, 1.0))
 
 
 class Skeptic(User):
-    def __init__(self, model, id, credibility=None, **kwargs):
+    def __init__(self, model, id=None, credibility=None, **kwargs):
+        if id is None:
+            id = len(model.agents_by_type[Skeptic]) if Skeptic in model.agents_by_type else 0
         super().__init__(model, id, credibility=credibility, **kwargs)
         if self.credibility is None:
             self.credibility = random.uniform(0.1, 0.3)
+
     
     def shareDecision(self, news: News) -> bool:
-        w1 = 0.1 
+        w1 = 0.3 
         w2 = 0.6 
-        w3 = 0.3
-        pc = self.computeShareProbability(news, w1, w2, w3)
-        return random.random() < pc
+        w3 = 0.1
+        if news.veracity == False:
+            return False
+        else:
+            pc = self.computeShareProbability(news, w1, w2, w3)
+            return random.random() < pc
 
     def updatePerception(self, news: News):
-        """Update in function to news recived."""
-        if (self.politicalParty == news.party):
-            x = 0.0 
+        factor = 1 if news.veracity == True else 0  #if the news is false doesnt sum, only sum if its true
+        if news.party == 'A':
+            self.perception["A"] = roundto(clamp(self.perception["A"] + (ALPHA * news.polarity * factor), -1.0, 1.0))
         else:
-            x = 1.0
-        self.perception = clamp(self.perception + x * ALPHA * news.polarity, -1.0, 1.0)
+            self.perception["B"] = roundto(clamp(self.perception["B"] + (ALPHA * news.polarity * factor), -1.0, 1.0))

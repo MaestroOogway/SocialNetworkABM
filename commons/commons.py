@@ -1,6 +1,5 @@
-class News:
-    def __init__(self, id, party, polarity, veracity):
-        self.id = id
-        self.party = party
-        self.polarity = polarity
-        self.veractity = veracity
+def clamp(x: float, a: float, b: float) -> float:
+    return max(a, min(b, x))
+
+def roundto(x):
+    return round(x, 2)
