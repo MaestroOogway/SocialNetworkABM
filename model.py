@@ -5,17 +5,17 @@ from mesa.discrete_space import OrthogonalMooreGrid
 from mesa.datacollection import DataCollector
 from mesa.experimental.devs import ABMSimulator
 
-from agents import BOT, Skeptic, Susceptible
-
+from agents import BOT, Skeptic, Susceptible, NewsReel
 
 class SocialNetworkModel(Model):
     def __init__(
         self,
         width=20,
         height=20,
-        n_susceptible=30,
-        n_skeptic=30,
-        n_bots=6,
+        n_susceptible=70,
+        n_skeptic=70,
+        n_bots=5,
+        n_newsreel=5,
         seed=None,
         simulator: ABMSimulator = None,
     ):
@@ -55,14 +55,21 @@ class SocialNetworkModel(Model):
             cell=self.random.choices(self.grid.all_cells.cells, k=n_bots),
         )
 
+        NewsReel.create_agents(
+            self,
+            n_newsreel,
+            cell=self.random.choices(self.grid.all_cells.cells, k=n_newsreel),
+        )
+
         # Guardar todos los agentes en una sola lista
         self.total_agents = (
             list(self.agents_by_type[BOT])
+            + list(self.agents_by_type[NewsReel])
             + list(self.agents_by_type[Skeptic])
             + list(self.agents_by_type[Susceptible])
         )
 
-        # --- NUEVA FUNCIÓN ---
+        # NUEVA FUNCIÓN
         def avg_perception_by_agent(m, party: str):
             """Calcula el promedio de percepción hacia un partido,
             separado por tipo de agente (Skeptic y Susceptible)."""
@@ -85,7 +92,7 @@ class SocialNetworkModel(Model):
 
             return {"Skeptic": avg_skeptic, "Susceptible": avg_susceptible}
 
-        # --- DATA COLLECTOR ---
+        #  DATA COLLECTOR 
         self.datacollector = DataCollector(
             model_reporters={
                 "AvgPerception_Skeptic": lambda m: avg_perception_by_agent(m, "A")["Skeptic"],
@@ -95,11 +102,16 @@ class SocialNetworkModel(Model):
             }
         )
 
-        # --- Inicialización: bots crean y envían noticias ---
+        # Inicialización: bots crean y envían noticias 
         for bot in self.agents_by_type[BOT]:
             bot.create_news()
             for news in list(bot.initialnews):
                 bot.sendNews(news, radius=1)
+
+        for newsreel in self.agents_by_type[NewsReel]:
+            newsreel.create_news()
+            for news in list(newsreel.initialnews):
+                newsreel.sendNews(news, radius=1)
 
         # Colecta inicial
         self.datacollector.collect(self)

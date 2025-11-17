@@ -1,5 +1,5 @@
 from model import SocialNetworkModel
-from agents import Susceptible, Skeptic, BOT
+from agents import Susceptible, Skeptic, BOT, NewsReel
 from mesa.experimental.devs import ABMSimulator
 from mesa.visualization import (
     CommandConsole,
@@ -27,6 +27,8 @@ def social_network_portrayal(agent):
         portrayal.update(("color", "blue"))
     elif isinstance(agent, BOT):
         portrayal.update(("color", "black"))
+    elif isinstance(agent, NewsReel):
+        portrayal.update(("color", "white"))
 
     return portrayal
 
@@ -39,8 +41,8 @@ model_params = {
     },
     "width": Slider("Grid Width", 20, 5, 50),
     "height": Slider("Grid Height", 20, 5, 50),
-    "n_susceptible": Slider("Initial Susceptible Users", 10, 1, 200),
-    "n_skeptic": Slider("Initial Skeptic Users", 10, 1, 200),
+    "n_susceptible": Slider("Initial Susceptible Users", 70, 1, 200),
+    "n_skeptic": Slider("Initial Skeptic Users", 70, 1, 200),
 }
 
 def post_process_space(ax):
